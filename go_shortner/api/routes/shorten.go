@@ -1,9 +1,15 @@
 package routes
 
 import (
-	"github.com/gofiber/fiber/v2"
-	"github.com/master-of-none/go_shortner/helpers"
+	"os"
+	"strconv"
 	"time"
+
+	"github.com/asaskevich/govalidator"
+	"github.com/gofiber/fiber/v2"
+	"github.com/master-of-none/go_shortner/database"
+	"github.com/master-of-none/go_shortner/helpers"
+	"github.com/redis/go-redis/v9"
 )
 
 type request struct {
@@ -29,6 +35,24 @@ func ShortenURL(c *fiber.Ctx) error {
 
 	//! Rate Limiting
 	// Check the IP and check whether it's stored in Database and then decrement the rate by 1
+	r2 := database.CreateClient(1)
+	defer r2.Close()
+	val, err := r2.Get(database.Ctx, c.IP()).Result()
+
+	if err == redis.Nil {
+		_ = r2.Set(database.Ctx, c.IP(), os.Getenv("API_QUOATA"), 30*60*time.Second).Err()
+
+	} else {
+		val, _ = r2.Get(database.Ctx, c.IP()).Result()
+		valInt, _ := strconv.Atoi(val)
+		if valInt <= 0 {
+			limit, _ := r2.TTL(database.Ctx, c.IP()).Result()
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+				"error":"Rate limit exceeded",
+				"rate_limit_reset": limit / time.Nanosecond / time.Minute
+			})
+		}
+	}
 
 	//! Check the input sent by User is URL
 	if !govalidator.IsURL(body.URL) {
